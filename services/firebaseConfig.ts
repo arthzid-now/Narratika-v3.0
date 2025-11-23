@@ -14,7 +14,8 @@ export const firebaseConfig = {
   appId: "1:590324305792:web:cb97fd0a94dfff3ea77b65"
 };
 
-// Cek sederhana biar gak crash kalau lupa isi
+// Cek sederhana biar gak crash
+// Kita ubah jadi true saja biar tidak memblokir UI, biarkan Firebase yang validasi nanti
 export const isFirebaseConfigured = () => {
-  return firebaseConfig.apiKey !== "AIzaSyAe_4V6ZewMpl-aEzy11i5PQ4d5kppgKk0";
+  return firebaseConfig.apiKey.length > 0;
 };
