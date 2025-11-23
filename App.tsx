@@ -7,19 +7,19 @@ import { generateProse, chatWithAssistant, generateStructuredCast, generateChara
 import { MarkdownRenderer } from './components/MarkdownRenderer';
 import { WorldGenerator, PlotGenerator, CharacterGenerator } from './components/StoryGenerators';
 import { translations } from './translations';
+import { loginWithGoogle, logoutUser, onAuthStateChange, syncStoriesToCloud, fetchStoriesFromCloud, mergeCloudAndLocal, getFirebaseUser, type User } from './services/firebaseService';
+import { isFirebaseConfigured } from './services/firebaseConfig';
 
 // --- Helper Functions ---
 const generateId = () => Math.random().toString(36).substr(2, 9);
 
 // FIX 1: LocalStorage Bomb Prevention (Image Compressor)
-// Compresses Gemini's high-res PNGs to smaller JPEGs before saving to LocalStorage
 const compressImage = (base64Str: string, maxWidth = 256): Promise<string> => {
   return new Promise((resolve) => {
     const img = new Image();
     img.src = `data:image/png;base64,${base64Str}`;
     img.onload = () => {
       const canvas = document.createElement('canvas');
-      // Calculate aspect ratio to keep it square or original
       const ratio = maxWidth / img.width;
       canvas.width = maxWidth;
       canvas.height = img.height * ratio;
@@ -28,12 +28,10 @@ const compressImage = (base64Str: string, maxWidth = 256): Promise<string> => {
       if (!ctx) { resolve(base64Str); return; }
       
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      // Convert to JPEG with 0.7 quality (Massive size reduction)
       const newStr = canvas.toDataURL('image/jpeg', 0.7);
-      // Remove the data:image/jpeg;base64, prefix to match existing logic
       resolve(newStr.split(',')[1]);
     };
-    img.onerror = () => resolve(base64Str); // Fallback if loading fails
+    img.onerror = () => resolve(base64Str);
   });
 };
 
@@ -45,11 +43,16 @@ function App() {
   const [activeStoryId, setActiveStoryId] = useState<string | null>(null);
   const [activeChapterId, setActiveChapterId] = useState<string | null>(null);
   
+  // Auth & Sync State
+  const [user, setUser] = useState<User | null>(null);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [showSyncSuccess, setShowSyncSuccess] = useState(false);
+  
   // Language State
   const [uiLanguage, setUiLanguage] = useState<Language>('en');
 
   // Editor State
-  const [isAiPanelOpen, setIsAiPanelOpen] = useState(false); // Closed by default on mobile for better first impression
+  const [isAiPanelOpen, setIsAiPanelOpen] = useState(false); 
   const [isChapterDrawerOpen, setIsChapterDrawerOpen] = useState(false); 
   const [editorSidebarTab, setEditorSidebarTab] = useState<'chat' | 'cast' | 'wiki' | 'plot'>('chat');
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
@@ -98,8 +101,9 @@ function App() {
   
   const t = translations[uiLanguage];
 
-  // --- Persistence ---
+  // --- Persistence & Auth ---
   useEffect(() => {
+    // Local Load
     const saved = localStorage.getItem('novella_stories');
     if (saved) {
       try {
@@ -113,8 +117,15 @@ function App() {
         console.error("Failed to load stories", e);
       }
     }
+
+    // Auth Listener
+    const unsubscribe = onAuthStateChange((currentUser) => {
+      setUser(currentUser);
+    });
+    return () => unsubscribe();
   }, []);
 
+  // Save to LocalStorage whenever stories change
   useEffect(() => {
     if (stories.length > 0) {
       try {
@@ -140,7 +151,6 @@ function App() {
     }
   }, [chatHistory, editorSidebarTab]);
 
-  // Adjust textarea height to content automatically
   useEffect(() => {
     if (view === ViewState.EDITOR && editorRef.current) {
       editorRef.current.style.height = 'auto';
@@ -152,6 +162,48 @@ function App() {
   const getWordCount = (text: string) => text.trim().split(/\s+/).filter(Boolean).length;
   const getCharCount = (text: string) => text.length;
   const getReadTime = (text: string) => Math.ceil(getWordCount(text) / 250);
+
+  // --- Cloud Handlers ---
+  const handleLogin = async () => {
+    if (!isFirebaseConfigured()) {
+      alert(t.setupRequired);
+      return;
+    }
+    try {
+      await loginWithGoogle();
+    } catch (e) {
+      alert("Login failed. See console.");
+    }
+  };
+
+  const handleLogout = async () => {
+    await logoutUser();
+    setUser(null);
+  };
+
+  const handleSync = async () => {
+    if (!user) return;
+    setIsSyncing(true);
+    try {
+      // 1. Upload local stories to cloud (Text only)
+      await syncStoriesToCloud(user.uid, stories);
+      
+      // 2. Fetch all stories from cloud
+      const cloudStories = await fetchStoriesFromCloud(user.uid);
+      
+      // 3. Smart Merge: Combine Cloud Text with Local Images
+      const mergedStories = mergeCloudAndLocal(stories, cloudStories);
+      
+      setStories(mergedStories);
+      setShowSyncSuccess(true);
+      setTimeout(() => setShowSyncSuccess(false), 3000);
+    } catch (e) {
+      console.error(e);
+      alert("Sync failed. Check console.");
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
   // --- Handlers ---
   const createNewStory = () => {
@@ -329,7 +381,6 @@ function App() {
     const rawBase64 = await generateCharacterImage(char, style);
     
     if (rawBase64) {
-      // Compress before saving to state
       const compressedBase64 = await compressImage(rawBase64);
       const updatedChar = { ...char, avatarBase64: compressedBase64 };
       setEditingCharacter(updatedChar);
@@ -378,7 +429,6 @@ function App() {
       const rawBase64 = await generateWorldItemImage(item, style);
       
       if (rawBase64) {
-          // Compress before saving
           const compressedBase64 = await compressImage(rawBase64);
           const updatedItem = { ...item, imageUrl: compressedBase64 };
           setEditingWorldItem(updatedItem);
@@ -401,14 +451,12 @@ function App() {
     if (!activeStory) return;
     
     if (activeStory.chapters.length === 0) {
-        // Manually creating chapter here to ensure synchronous state update logic
         const newChapterId = generateId();
         const newChapter: Chapter = {
           id: newChapterId,
           title: `${uiLanguage === 'id' ? 'Bab' : 'Chapter'} 1`,
           content: ''
         };
-        // Direct state update to ensure immediate availability
         const updatedChapters = [newChapter];
         setStories(stories.map(s => s.id === activeStoryId ? { ...s, chapters: updatedChapters, lastUpdated: Date.now() } : s));
         setActiveChapterId(newChapterId);
@@ -451,7 +499,6 @@ function App() {
     setIsWriterLoading(true);
     setWriterStatus(t.generating);
 
-    // FIX 2: Phantom Cursor Logic
     let cursor = editorRef.current.selectionStart;
     if (cursor === 0 && activeChapter.content.length > 0) {
         cursor = activeChapter.content.length;
@@ -493,7 +540,6 @@ function App() {
     setIsChatLoading(false);
   };
 
-  // --- Render Helpers ---
   const renderHeader = () => (
     <header className="h-16 bg-white/80 backdrop-blur-md border-b border-stone-200 flex items-center justify-between px-4 md:px-8 flex-shrink-0 z-40">
       <div className="flex items-center gap-4">
@@ -507,6 +553,24 @@ function App() {
          </h1>
       </div>
       <div className="flex items-center gap-3">
+        {/* Auth Buttons */}
+        {user ? (
+            <div className="flex items-center gap-3">
+                <div className="hidden md:flex flex-col items-end mr-2">
+                    <span className="text-[10px] font-bold text-stone-400 uppercase tracking-wider">{t.cloudSafe}</span>
+                    <span className="text-xs font-bold text-ink">{user.displayName}</span>
+                </div>
+                <img src={user.photoURL || ''} className="w-8 h-8 rounded-full border border-stone-200" alt="User" />
+                <Button variant="ghost" size="sm" onClick={handleLogout} className="text-xs">{t.logout}</Button>
+            </div>
+        ) : (
+            <Button variant="magic" size="sm" onClick={handleLogin}>
+                {t.loginGoogle}
+            </Button>
+        )}
+
+        <div className="h-4 w-px bg-stone-300 mx-1"></div>
+
         <select 
             value={uiLanguage} 
             onChange={(e) => setUiLanguage(e.target.value as Language)}
@@ -529,16 +593,32 @@ function App() {
           <div className="max-w-7xl mx-auto">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-8 md:mb-12 gap-4">
                 <div>
-                <h2 className="text-3xl md:text-4xl font-serif font-bold mb-2 md:mb-3 text-ink tracking-tight">{t.startNovel}</h2>
-                <p className="text-stone-500 font-medium text-sm md:text-base">{t.appDesc}</p>
+                  <h2 className="text-3xl md:text-4xl font-serif font-bold mb-2 md:mb-3 text-ink tracking-tight">{t.startNovel}</h2>
+                  <p className="text-stone-500 font-medium text-sm md:text-base">{t.appDesc}</p>
                 </div>
-                <div className="flex gap-3 w-full md:w-auto">
-                    <Button onClick={() => setIsImportModalOpen(true)} variant="secondary" className="flex-1 md:flex-none shadow-sm justify-center">
-                    📥 {t.importStory}
-                    </Button>
-                    <Button onClick={createNewStory} variant="primary" className="flex-1 md:flex-none shadow-lg shadow-stone-900/20 justify-center">
-                    {t.createNew}
-                    </Button>
+                <div className="flex flex-col gap-2 w-full md:w-auto">
+                    <div className="flex gap-3 w-full md:w-auto">
+                        <Button onClick={() => setIsImportModalOpen(true)} variant="secondary" className="flex-1 md:flex-none shadow-sm justify-center">
+                        📥 {t.importStory}
+                        </Button>
+                        <Button onClick={createNewStory} variant="primary" className="flex-1 md:flex-none shadow-lg shadow-stone-900/20 justify-center">
+                        {t.createNew}
+                        </Button>
+                    </div>
+                    {/* Sync Button */}
+                    {user && (
+                        <div className="w-full md:w-auto">
+                             <Button 
+                                onClick={handleSync} 
+                                isLoading={isSyncing} 
+                                variant="ghost" 
+                                className={`w-full justify-center border border-stone-200 ${showSyncSuccess ? 'bg-green-50 text-green-700 border-green-200' : 'bg-white'}`}
+                             >
+                                 {showSyncSuccess ? `✓ ${t.syncSuccess}` : `☁️ ${t.syncNow}`}
+                             </Button>
+                             <p className="text-[10px] text-stone-400 text-center mt-1">{t.syncDesc}</p>
+                        </div>
+                    )}
                 </div>
             </div>
 

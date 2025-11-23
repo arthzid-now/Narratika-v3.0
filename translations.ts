@@ -26,7 +26,8 @@ type TranslationKeys =
   | 'tabChat' | 'tabCast' | 'tabWiki' | 'tabPlot' | 'wordCount' | 'readingTime' | 'minRead' | 'directorMode' | 'writeInstr' | 'writeInstrPlaceholder'
   | 'lenShort' | 'lenMed' | 'lenLong' | 'lenPanic' | 'lenPanicDesc' | 'writeBtn'
   | 'importStory' | 'importDesc' | 'pasteText' | 'extracting' | 'importBtn' | 'importWarn' | 'sourceLang' | 'selectSourceLang'
-  | 'genesisTooltip' | 'autoSetupTooltip';
+  | 'genesisTooltip' | 'autoSetupTooltip'
+  | 'loginGoogle' | 'logout' | 'syncNow' | 'syncing' | 'syncSuccess' | 'syncDesc' | 'cloudSafe' | 'setupRequired';
 
 export const translations: Record<Language, Record<TranslationKeys | string, string>> = {
   en: {
@@ -181,7 +182,15 @@ export const translations: Record<Language, Record<TranslationKeys | string, str
     sourceLang: "Source Text Language",
     selectSourceLang: "Select language of the pasted text",
     genesisTooltip: "Uses your Premise to instantly generate Characters, World items, and a Plot Outline.",
-    autoSetupTooltip: "Uses your selected Genres to auto-generate a Title, Premise, Tone, and Style."
+    autoSetupTooltip: "Uses your selected Genres to auto-generate a Title, Premise, Tone, and Style.",
+    loginGoogle: "Login with Google",
+    logout: "Logout",
+    syncNow: "Sync to Cloud",
+    syncing: "Syncing...",
+    syncSuccess: "Synced successfully!",
+    syncDesc: "Save text to cloud, keep images local.",
+    cloudSafe: "Stories backed up",
+    setupRequired: "Firebase config missing. Edit services/firebaseConfig.ts"
   },
   id: {
     appTitle: "Narratika",
@@ -335,6 +344,14 @@ export const translations: Record<Language, Record<TranslationKeys | string, str
     sourceLang: "Bahasa Naskah Asli",
     selectSourceLang: "Pilih bahasa dari teks yang di-paste",
     genesisTooltip: "Membuat Karakter, Dunia, dan Plot instan berdasarkan Premis.",
-    autoSetupTooltip: "Membuat Judul, Premis, Tone, dan Gaya instan berdasarkan Genre."
+    autoSetupTooltip: "Membuat Judul, Premis, Tone, dan Gaya instan berdasarkan Genre.",
+    loginGoogle: "Masuk dengan Google",
+    logout: "Keluar",
+    syncNow: "Sync ke Cloud",
+    syncing: "Sinkronisasi...",
+    syncSuccess: "Berhasil sync!",
+    syncDesc: "Simpan teks ke cloud, gambar tetap lokal.",
+    cloudSafe: "Cerita tersimpan aman",
+    setupRequired: "Config Firebase hilang. Edit services/firebaseConfig.ts"
   }
 };
